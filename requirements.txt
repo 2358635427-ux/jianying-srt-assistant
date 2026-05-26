@@ -1,0 +1,8 @@
+PyQt6>=6.5.0
+
+# Windows 构建额外依赖:
+#   pip install pyinstaller
+#   (Inno Setup 需单独下载: https://jrsoftware.org/isdl.php)
+#
+# macOS 构建额外依赖:
+#   pip install py2app
