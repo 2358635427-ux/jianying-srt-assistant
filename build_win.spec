@@ -12,7 +12,7 @@ The output will be in  dist/剪映字幕助手/
 import sys
 from pathlib import Path
 
-_project_dir = Path(__file__).resolve().parent
+_project_dir = Path(SPECPATH).resolve()
 sys.path.insert(0, str(_project_dir))
 
 # --- collect PyQt6 hidden imports ----------------------------------------
