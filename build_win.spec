@@ -85,10 +85,8 @@ _icon = _icon_file if Path(_icon_file).exists() else None
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="剪映字幕助手",
     debug=False,
     bootloader_ignore_signals=False,
@@ -103,4 +101,16 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     **({"icon": _icon} if _icon else {}),
+)
+
+# Collect everything into a folder (one-folder mode)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="剪映字幕助手",
 )
