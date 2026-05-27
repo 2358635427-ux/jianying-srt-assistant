@@ -364,13 +364,14 @@ def process_srt_entries(
     max_chars: int,
     mode: str = "general",
     merge: bool = True,
+    capitalize: bool = True,
 ) -> List[SubtitleEntry]:
     """
     Full processing pipeline:
     1. Split long entries to fit max_chars
     2. Optionally merge short adjacent entries
     3. Enforce single-line constraint
-    4. Apply English capitalization if in en_only mode
+    4. Optionally apply English capitalization (en_only mode)
     """
     result: List[SubtitleEntry] = []
 
@@ -398,8 +399,8 @@ def process_srt_entries(
     if merge:
         result = merge_short_entries(result, max_chars)
 
-    # Apply English mode capitalization
-    if mode == "en_only":
+    # Optionally apply English mode capitalization
+    if mode == "en_only" and capitalize:
         for e in result:
             e.text = _capitalize_sentence(e.text)
 
@@ -440,7 +441,7 @@ def _capitalize_sentence(text: str) -> str:
 # Convenience
 # ---------------------------------------------------------------------------
 
-def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str) -> str:
+def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize: bool = True) -> str:
     """
     High-level entry point: parse SRT text, process it, return new SRT text.
     If english_limit is None, uses the same limit for both languages
@@ -475,7 +476,7 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
     result = _fix_overlaps(result)
     result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit))
 
-    if mode == "en_only":
+    if mode == "en_only" and capitalize:
         for e in result:
             e.text = _capitalize_sentence(e.text)
 

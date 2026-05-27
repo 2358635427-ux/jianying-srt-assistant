@@ -11,7 +11,7 @@
 
 #define MyAppName       "剪映字幕助手"
 #define MyAppNameEn     "Draft SRT Assistant"
-#define MyAppVersion    "1.2.2"
+#define MyAppVersion    "1.3.0"
 #define MyAppPublisher  "小方"
 #define MyAppURL        ""
 #define MyAppExeName    "剪映字幕助手.exe"

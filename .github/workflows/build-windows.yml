@@ -45,11 +45,11 @@ jobs:
       - name: 上传便携版 (免安装)
         uses: actions/upload-artifact@v4
         with:
-          name: 剪映字幕助手_v1.2.2_portable
+          name: 剪映字幕助手_v1.3.0_portable
           path: dist\剪映字幕助手\
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: 剪映字幕助手_v1.2.2_Setup
+          name: 剪映字幕助手_v1.3.0_Setup
           path: Output\*.exe

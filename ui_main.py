@@ -709,7 +709,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._wp_clear_btn)
 
         # --- Version badge ---
-        badge = QLabel("v1.2")
+        badge = QLabel("v1.3")
         badge.setStyleSheet(
             "font-size: 10px; color: #6a6470; background: rgba(30, 30, 40, 0.90); "
             "border: 1px solid #2e2e3a; border-radius: 9px; padding: 1px 9px;"
@@ -872,9 +872,14 @@ class MainWindow(QMainWindow):
         self._mode_general.toggled.connect(self._on_mode_changed)
         radio_row.addWidget(self._mode_general)
 
-        self._mode_en = QRadioButton("纯英文模式（首字母大写）")
+        self._mode_en = QRadioButton("纯英文模式")
         self._mode_en.toggled.connect(self._on_mode_changed)
         radio_row.addWidget(self._mode_en)
+
+        self._chk_capitalize = QCheckBox("首字母大写")
+        self._chk_capitalize.setChecked(True)
+        self._chk_capitalize.setToolTip("自动将每条字幕的首字母大写")
+        radio_row.addWidget(self._chk_capitalize)
         radio_row.addStretch()
         layout.addLayout(radio_row)
 
@@ -1047,8 +1052,9 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self) -> None:
         is_en = self._mode_en.isChecked()
         self._spin_chinese.setEnabled(not is_en)
+        self._chk_capitalize.setEnabled(is_en)
         msg = (
-            "纯英文模式：所有字幕按英文限制处理，首字母自动大写"
+            "纯英文模式：所有字幕按英文限制处理"
             if is_en else
             "通用模式：自动识别中/英文，分别应用字数限制"
         )
@@ -1145,6 +1151,7 @@ class MainWindow(QMainWindow):
             if is_en:
                 processed = process_srt_entries(
                     entries, max_chars=en_limit, mode="en_only", merge=do_merge,
+                    capitalize=self._chk_capitalize.isChecked(),
                 )
             else:
                 processed = self._process_with_per_entry_limits(
@@ -1210,6 +1217,9 @@ class MainWindow(QMainWindow):
         self._chk_merge.setChecked(
             bool(self._settings.value("merge_short", True))
         )
+        self._chk_capitalize.setChecked(
+            bool(self._settings.value("capitalize", True))
+        )
 
         # Restore text lightness (or default)
         saved_text = int(self._settings.value("text_lightness", DEFAULT_TEXT_LIGHTNESS))
@@ -1229,6 +1239,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("chinese_limit", self._spin_chinese.value())
         self._settings.setValue("english_limit", self._spin_english.value())
         self._settings.setValue("merge_short", self._chk_merge.isChecked())
+        self._settings.setValue("capitalize", self._chk_capitalize.isChecked())
         self._settings.setValue("text_lightness", self._text_lightness)
         self._save_wp_settings()
 
@@ -1245,7 +1256,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "关于 剪映字幕助手",
             "<h3 style='color:#d4a040'>剪映字幕助手</h3>"
-            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.2</p>"
+            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.3</p>"
             "<p style='color:#8a8070'>"
             "专门针对剪映的字幕后处理工具。<br>"
             "支持单行字幕字数限制（中/英文可配置），<br>"
