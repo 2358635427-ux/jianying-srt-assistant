@@ -419,7 +419,7 @@ def process_srt_entries(
 
     # Sentence-level capitalization: only capitalize when a new sentence starts
     if mode == "en_only" and capitalize:
-        _SENTENCE_END_RE = re.compile(r"[.!?]['\")」】]?\s*$")
+        _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
         for i, e in enumerate(result):
             is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
             e.text = _capitalize_entry_sentences(e.text, is_start)
@@ -446,7 +446,7 @@ def _fix_overlaps(entries: List[SubtitleEntry]) -> List[SubtitleEntry]:
     return fixed
 
 
-_SENTENCE_BOUNDARY_RE = re.compile(r'[.!?]["\'」】)]?\s+([a-z])')
+_SENTENCE_BOUNDARY_RE = re.compile(r'[.!?。]["\'」】)]?\s+([a-z])')
 
 
 def _capitalize_sentence(text: str) -> str:
@@ -527,7 +527,7 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
 
     # Sentence-level capitalization
     if mode == "en_only" and capitalize:
-        _SENTENCE_END_RE2 = re.compile(r"[.!?]['\")」】]?\s*$")
+        _SENTENCE_END_RE2 = re.compile(r"[.!?。]['\")」】]?\s*$")
         for i, e in enumerate(result):
             is_start = (i == 0) or bool(_SENTENCE_END_RE2.search(result[i - 1].text.rstrip()))
             e.text = _capitalize_entry_sentences(e.text, is_start)

@@ -44,6 +44,7 @@ from srt_processor import (
     _fix_overlaps,
     merge_short_entries,
     _is_primarily_cjk,
+    _capitalize_entry_sentences,
     SubtitleEntry,
 )
 
@@ -876,9 +877,12 @@ class MainWindow(QMainWindow):
         self._mode_en.toggled.connect(self._on_mode_changed)
         radio_row.addWidget(self._mode_en)
 
-        self._chk_capitalize = QCheckBox("首字母大写")
+        self._chk_capitalize = QCheckBox("句首大写")
         self._chk_capitalize.setChecked(True)
-        self._chk_capitalize.setToolTip("自动将每条字幕的首字母大写")
+        self._chk_capitalize.setToolTip(
+            "英文句首自动大写：每句完整的话开头字母大写，"
+            "句号/问号/感叹号后自动识别新句子"
+        )
         radio_row.addWidget(self._chk_capitalize)
         radio_row.addStretch()
         layout.addLayout(radio_row)
@@ -1052,7 +1056,6 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self) -> None:
         is_en = self._mode_en.isChecked()
         self._spin_chinese.setEnabled(not is_en)
-        self._chk_capitalize.setEnabled(is_en)
         msg = (
             "纯英文模式：所有字幕按英文限制处理"
             if is_en else
@@ -1156,6 +1159,7 @@ class MainWindow(QMainWindow):
             else:
                 processed = self._process_with_per_entry_limits(
                     entries, ch_limit, en_limit, do_merge,
+                    capitalize=self._chk_capitalize.isChecked(),
                 )
         except Exception as e:
             QMessageBox.critical(self, "错误", f"处理失败：\n{e}")
@@ -1178,7 +1182,9 @@ class MainWindow(QMainWindow):
 
     def _process_with_per_entry_limits(
         self, entries: list, ch_limit: int, en_limit: int, merge: bool,
+        capitalize: bool = False,
     ) -> list:
+        import re
         result: list = []
         for entry in entries:
             limit = ch_limit if _is_primarily_cjk(entry.text) else en_limit
@@ -1196,6 +1202,14 @@ class MainWindow(QMainWindow):
         result = _fix_overlaps(result)
         if merge:
             result = merge_short_entries(result, max(ch_limit, en_limit))
+
+        # Sentence-level capitalization (works in both modes)
+        if capitalize:
+            _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
+            for i, e in enumerate(result):
+                is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
+                e.text = _capitalize_entry_sentences(e.text, is_start)
+
         for i, e in enumerate(result, 1):
             e.index = i
         return result
