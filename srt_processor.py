@@ -521,6 +521,89 @@ def _is_dialogue_boundary(prev_text: str, next_text: str) -> bool:
     return False
 
 
+def _split_at_dialogue_boundaries(
+    entries: List[SubtitleEntry],
+) -> List[SubtitleEntry]:
+    """Scan entries for internal dialogue boundaries and split at them.
+
+    When a merged entry contains patterns like "...yesterday. Dad, can you...",
+    splits it at the conversation boundary with proportional timestamps.
+    """
+    # Match: sentence-ending punctuation, optional quote/paren, whitespace,
+    # then an English vocative/greeting (case-insensitive)
+    _VOCATIVES = (
+        r"Dad|Mom|Mum|Daddy|Mommy|Mummy|Sir|Ma['’]?am|Madam|Mister|Miss"
+        r"|Doctor|Professor|Officer|Boss|Captain|Commander"
+        r"|Bro|Dude|Man|Buddy|Pal|Mate"
+        r"|Honey|Darling|Sweetie|Sweetheart|Baby|Babe"
+        r"|Son|Dear|Love|Boy|Girl|Guys|Folks"
+        r"|Mr\.|Mrs\.|Ms\.|Dr\."
+        r"|Hello|Hi|Hey|Yo|Well|Okay|Ok|Alright"
+        r"|Oh|Ah|Uh|Um|Eh|Wow|Oops|Ugh"
+        r"|Yes|No|Yeah|Nope|Yep|Sure|Thanks|Please|Sorry"
+        r"|Wait|Stop|Look|Listen|Really|Seriously|Help"
+    )
+    # Group 1: punctuation+space, Group 2: the vocative word
+    _BOUNDARY_RE = re.compile(
+        r"([.!?。！？]['\"」】)]?\s+)"
+        r"(" + _VOCATIVES + r")"
+        r"(?:[,!.\s]|$)",
+        re.IGNORECASE,
+    )
+
+    result: List[SubtitleEntry] = []
+    for entry in entries:
+        text = entry.text
+        matches = list(_BOUNDARY_RE.finditer(text))
+        if not matches:
+            result.append(entry)
+            continue
+
+        duration = entry.end_ms - entry.start_ms
+        if duration <= 0:
+            duration = 1000
+
+        # Split at the vocative word boundary (after sentence-ending punctuation)
+        split_positions = []
+        for m in matches:
+            split_positions.append(m.start(2))  # start of the vocative word
+
+        # Build parts
+        parts: List[str] = []
+        last = 0
+        for pos in split_positions:
+            part = text[last:pos].strip()
+            if part:
+                parts.append(part)
+            last = pos
+        tail = text[last:].strip()
+        if tail:
+            parts.append(tail)
+
+        if len(parts) <= 1:
+            result.append(entry)
+            continue
+
+        total_chars = sum(len(p) for p in parts)
+        if total_chars == 0:
+            result.append(entry)
+            continue
+
+        start_ms = entry.start_ms
+        for part in parts:
+            part_duration = int(duration * len(part) / total_chars)
+            end_ms = min(start_ms + part_duration, entry.end_ms)
+            result.append(SubtitleEntry(
+                index=0,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                text=part,
+            ))
+            start_ms = end_ms + 30
+
+    return result
+
+
 def merge_short_entries(
     entries: List[SubtitleEntry],
     max_chars: int,
@@ -603,6 +686,10 @@ def process_srt_entries(
     # Optional merge
     if merge:
         result = merge_short_entries(result, max_chars, detect_dialogue=detect_dialogue)
+
+    # Active dialogue splitting — scan merged entries for internal conversation boundaries
+    if detect_dialogue:
+        result = _split_at_dialogue_boundaries(result)
 
     # Capitalization (both modes — sentence-level takes priority)
     if mode == "en_only":
@@ -715,6 +802,9 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
 
     result = _fix_overlaps(result)
     result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit), detect_dialogue=detect_dialogue)
+
+    if detect_dialogue:
+        result = _split_at_dialogue_boundaries(result)
 
     # Capitalization
     if mode == "en_only":

@@ -1224,6 +1224,11 @@ class MainWindow(QMainWindow):
         if merge:
             result = merge_short_entries(result, max(ch_limit, en_limit), detect_dialogue=detect_dialogue)
 
+        # Active dialogue splitting
+        if detect_dialogue:
+            from srt_processor import _split_at_dialogue_boundaries
+            result = _split_at_dialogue_boundaries(result)
+
         # Capitalization: sentence-level takes priority over per-line
         if capitalize_sentence:
             _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
