@@ -45,6 +45,7 @@ from srt_processor import (
     merge_short_entries,
     _is_primarily_cjk,
     _capitalize_entry_sentences,
+    _capitalize_sentence,
     SubtitleEntry,
 )
 
