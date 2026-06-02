@@ -46,6 +46,7 @@ from srt_processor import (
     _is_primarily_cjk,
     _capitalize_entry_sentences,
     _capitalize_sentence,
+    _is_sentence_boundary,
     SubtitleEntry,
 )
 
@@ -1232,9 +1233,8 @@ class MainWindow(QMainWindow):
 
         # Capitalization: sentence-level takes priority over per-line
         if capitalize_sentence:
-            _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
             for i, e in enumerate(result):
-                is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
+                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
                 e.text = _capitalize_entry_sentences(e.text, is_start)
         elif capitalize_line:
             for e in result:

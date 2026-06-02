@@ -417,13 +417,186 @@ _CONTINUATION_MARKERS: Set[str] = {
 }
 
 
+# -- Punctuation-free sentence boundary detection ----------------------------------
+# Chinese sentence-final particles (modal particles, aspect markers)
+# These strongly suggest a preceding clause/sentence is complete.
+_CN_SENTENCE_ENDERS: Set[str] = {
+    "了", "吧", "吗", "呢", "啊", "呀", "哦", "嘛", "呗", "啦",
+    "的", "地", "得", "着", "过", "么", "哇", "哈", "哟", "喽",
+}
+
+# Chinese sentence starters — words that typically begin a new clause/sentence
+_CN_SENTENCE_STARTERS: Set[str] = {
+    # Pronouns (r)
+    "我", "你", "您", "他", "她", "它", "我们", "你们", "他们", "她们",
+    "自己", "大家", "别人", "人家", "谁", "什么", "哪", "哪儿", "怎么",
+    # Demonstratives (r)
+    "这", "那", "这个", "那个", "这些", "那些", "这里", "那里",
+    # Time words (t)
+    "今天", "昨天", "明天", "现在", "刚才", "之前", "以后", "后来",
+    "然后", "首先", "接着", "随后", "最后", "终于", "最近",
+    # Conjunctions that start new thoughts (c)
+    "但是", "可是", "不过", "所以", "因此", "那么", "而且", "并且",
+    "然而", "于是", "总之", "另外", "此外", "还有", "其实",
+    # Adverbs (d)
+    "当然", "突然", "忽然", "果然", "居然", "竟然", "反正",
+    "也许", "大概", "可能", "应该", "一定", "肯定", "确实",
+    "已经", "曾经", "正在", "将要", "一直", "总是",
+    # Prepositions (p)
+    "在", "从", "对", "向", "把", "被", "让", "给", "为", "以",
+    "关于", "对于", "至于", "按照", "根据", "经过", "通过",
+    # Common sentence-initial verbs
+    "有", "是", "像", "觉得", "认为", "希望", "知道", "想",
+}
+
+# English sentence starters — first words that typically begin sentences
+_EN_SENTENCE_STARTERS: Set[str] = {
+    # Subject pronouns (strong sentence starts)
+    "i", "you", "he", "she", "it", "we", "they",
+    # Demonstratives
+    "this", "that", "these", "those", "there", "here",
+    # Question words (strong sentence starts)
+    "what", "why", "when", "where", "how", "who", "which",
+    # Possessives as subjects
+    "my", "your", "his", "her", "its", "our", "their",
+    # Conjunctions that start new thoughts (NOT "and"/"but"/"so" —
+    # those are usually continuations in subtitle context)
+    "well", "now", "then",
+    "however", "therefore", "also", "still",
+    # Common sentence-starting adverbs
+    "no", "not", "never", "always", "maybe", "perhaps",
+    "really", "actually", "honestly", "seriously",
+    "let", "please", "look", "listen",
+}
+
+
+def _get_first_word(text: str) -> str:
+    """Extract the first meaningful word from text (lowercased)."""
+    text = text.lstrip()
+    m = re.match(r"[\w']+", text)
+    return m.group(0).lower() if m else ""
+
+
+def _get_last_word(text: str) -> str:
+    """Extract the last word/punctuation from text."""
+    text = text.rstrip()
+    m = re.search(r"[\w。！？.!?]+$", text)
+    return m.group(0) if m else ""
+
+
+def _looks_like_sentence_starter(text: str) -> bool:
+    """Check if text starts like a new sentence (without requiring punctuation)."""
+    if not text:
+        return False
+    first = _get_first_word(text)
+    if not first:
+        return False
+    # English check
+    if first.lower() in _EN_SENTENCE_STARTERS:
+        return True
+    # Chinese check — use jieba to get the first token
+    tokens = list(pseg.cut(text.lstrip()))
+    if tokens:
+        first_word, first_flag = tokens[0]
+        if first_word in _CN_SENTENCE_STARTERS:
+            return True
+        # POS-based: pronouns (r), time words (t), conjunctions (c) start sentences
+        if first_flag in ("r", "t", "c"):
+            return True
+    return False
+
+
+def _looks_like_sentence_ender(text: str) -> bool:
+    """Check if text ends like a complete sentence (without requiring punctuation)."""
+    if not text:
+        return False
+    # Punctuation check
+    if text.rstrip()[-1] in "。！？.!?":
+        return True
+    # Chinese sentence-final particles
+    tokens = list(pseg.cut(text.rstrip()))
+    if tokens:
+        last_word, last_flag = tokens[-1]
+        if last_word in _CN_SENTENCE_ENDERS:
+            return True
+        # POS-based: modal particles (y), aspect particles (u)
+        if last_flag == "y":
+            return True
+    return False
+
+
+def _is_sentence_boundary(prev_text: str, next_text: str) -> bool:
+    """Detect sentence boundary between two texts using both
+    punctuation and linguistic patterns (works without punctuation).
+
+    Returns True if next_text likely starts a new sentence.
+    """
+    prev = prev_text.rstrip()
+    nxt = next_text.lstrip()
+    if not prev or not nxt:
+        return True  # first entry starts a new sentence
+
+    # 1. Punctuation-based (strong signal)
+    if prev.endswith(("。", "！", "？", ".", "!", "?")):
+        ch2 = nxt[:2] if len(nxt) >= 2 else ""
+        if ch2 not in _CONTINUATION_MARKERS:
+            return True
+
+    # 2. English continuation conjunctions → NOT a boundary
+    first_en = _get_first_word(nxt)
+    if first_en in ("and", "but", "or", "so", "because", "then", "also", "plus"):
+        return False
+
+    # 3. Greeting / vocative → new sentence
+    if _looks_like_conversation_starter(nxt):
+        return True
+
+    # 3. Sentence-ender + sentence-starter → strong boundary
+    prev_ends = _looks_like_sentence_ender(prev)
+    next_starts = _looks_like_sentence_starter(nxt)
+    if prev_ends and next_starts:
+        return True
+
+    # 4. Sentence starter → check continuity for confirmation
+    if next_starts:
+        continuity = _compute_continuity_score(prev, nxt)
+        # Lower threshold: if next looks like a sentence start, only need mild
+        # topic discontinuity.  Also handle neutral scores (0.50) from short/
+        # English text where jieba POS yields few keywords.
+        if continuity < 0.45:
+            return True
+
+    # 5. Sentence ender alone with moderate topic shift
+    if prev_ends:
+        continuity = _compute_continuity_score(prev, nxt)
+        if continuity < 0.35:
+            return True
+
+    return False
+
+
 def _extract_keywords(text: str) -> Set[str]:
-    """Extract content words (nouns, verbs, adjectives) for topic comparison."""
-    words = pseg.cut(text)
-    return {
+    """Extract content words (nouns, verbs, adjectives) for topic comparison.
+
+    Falls back to English word-splitting when jieba POS yields too few results
+    (common with English-only text where jieba tags everything as 'eng').
+    """
+    words = list(pseg.cut(text))
+    result = {
         word for word, flag in words
         if flag.startswith(("n", "v", "a")) and len(word) >= 2
     }
+    # Fallback for English text: jieba tags most English words as 'eng' or 'x',
+    # so extract meaningful words manually (skip stopwords, short words)
+    if len(result) < 2 and not _is_primarily_cjk(text):
+        _EN_STOPWORDS = {"the", "a", "an", "is", "are", "was", "were", "be",
+                          "been", "am", "in", "on", "at", "to", "for", "of",
+                          "and", "or", "but", "so", "if", "it", "its", "this",
+                          "that", "with", "from", "by", "as", "not", "no", "we",
+                          "you", "he", "she", "they", "my", "your", "his", "her"}
+        en_words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+        result = {w for w in en_words if w not in _EN_STOPWORDS}
+    return result
 
 
 def _extract_names(text: str) -> Set[str]:
@@ -694,9 +867,8 @@ def process_srt_entries(
     # Capitalization (both modes — sentence-level takes priority)
     if mode == "en_only":
         if capitalize_sentence:
-            _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
             for i, e in enumerate(result):
-                is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
+                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
                 e.text = _capitalize_entry_sentences(e.text, is_start)
         elif capitalize_line:
             for e in result:
@@ -809,9 +981,8 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
     # Capitalization
     if mode == "en_only":
         if capitalize_sentence:
-            _SENTENCE_END_RE2 = re.compile(r"[.!?。]['\")」】]?\s*$")
             for i, e in enumerate(result):
-                is_start = (i == 0) or bool(_SENTENCE_END_RE2.search(result[i - 1].text.rstrip()))
+                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
                 e.text = _capitalize_entry_sentences(e.text, is_start)
         elif capitalize_line:
             for e in result:
