@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 import jieba
+import jieba.posseg as pseg
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +342,87 @@ def redistribute_timestamps(
 # Merge short adjacent subtitles (optional optimization)
 # ---------------------------------------------------------------------------
 
+# -- Dialogue boundary detection ------------------------------------------------
+
+# Speech / conversation verbs — indicate a new speaker may be talking
+_SPEECH_MARKERS: Set[str] = {
+    "说", "道", "问", "答", "讲", "喊", "叫", "嚷", "骂",
+    "哭", "笑", "喝", "唱", "念", "读", "写", "骂", "劝",
+    "回答", "问道", "说道", "答道", "反问", "追问", "笑着说",
+    "哭着说", "大喊", "大叫", "问道", "问道", "轻声说", "低声说",
+}
+
+# Continuation words — the next line continues the same speaker's thought
+_CONTINUATION_MARKERS: Set[str] = {
+    "但", "但是", "而", "而且", "所以", "因此", "因为", "如果",
+    "虽然", "然而", "不过", "可是", "却", "则", "于是", "接着",
+    "然后", "况且", "此外", "另外", "还", "也", "又", "再",
+    "就", "便", "才", "并", "并且", "同样", "同时", "最后",
+    "终于", "当然", "果然", "忽然", "突然", "于是", "总之",
+    "那", "那么", "这", "这个", "那个", "这些",
+    "先", "首先", "随后", "之后", "后来", "不仅", "不光",
+    "不只", "除非", "无论", "不管", "既然", "以至", "以便",
+    "以免", "省得", "免得", "与其", "宁可", "宁愿",
+}
+
+
+def _extract_keywords(text: str) -> Set[str]:
+    """Extract content words (nouns, verbs) for topic comparison."""
+    words = pseg.cut(text)
+    return {
+        word for word, flag in words
+        if flag.startswith(("n", "v", "a")) and len(word) >= 2
+    }
+
+
+def _is_dialogue_boundary(prev_text: str, next_text: str) -> bool:
+    """Detect if there is a speaker/topic boundary between two pieces of text.
+
+    Returns True when the two texts likely belong to different speakers or
+    independent sentences that should NOT be merged together.
+    """
+    prev = prev_text.rstrip()
+    nxt = next_text.lstrip()
+    if not prev or not nxt:
+        return False
+
+    # ── 1. Strong boundary: sentence-ending or speech-intro punctuation ──
+    if prev.endswith(("。", "！", "？", ".", "!", "?", "」", "』", "：", "∶")):
+        # Exception: next line starts with a conjunction → same speaker continues
+        ch1 = nxt[:1] if nxt else ""
+        ch2 = nxt[:2] if len(nxt) >= 2 else nxt[:1] if nxt else ""
+        if ch1 in _CONTINUATION_MARKERS or ch2 in _CONTINUATION_MARKERS:
+            return False
+        return True
+
+    # ── 2. Speech-verb markers in next entry ──
+    # If the next line opens with a speech verb, likely a new speaker
+    first_two = nxt[:2]
+    first_four = nxt[:4]
+    if first_two in _SPEECH_MARKERS or first_four in _SPEECH_MARKERS:
+        # Check that prev doesn't end mid-thought (comma, semicolon)
+        if not prev.endswith(("，", ",", "；", ";", "、", "…")):
+            return True
+
+    # ── 3. Question → non-question transition ──
+    if prev.endswith(("？", "?")):
+        # New speaker answering is very common
+        return True
+
+    # ── 4. Topic shift via keyword overlap (lightweight NLP) ──
+    kw_prev = _extract_keywords(prev)
+    kw_next = _extract_keywords(nxt)
+    # Only apply topic detection when both sides have enough content words
+    if len(kw_prev) >= 3 and len(kw_next) >= 3:
+        overlap = kw_prev & kw_next
+        min_size = min(len(kw_prev), len(kw_next))
+        # If <20% keyword overlap, likely a different speaker/topic
+        if len(overlap) / min_size < 0.20:
+            return True
+
+    return False
+
+
 def merge_short_entries(
     entries: List[SubtitleEntry],
     max_chars: int,
@@ -360,7 +442,10 @@ def merge_short_entries(
         gap = curr.start_ms - prev.end_ms
         combined = prev.text + " " + curr.text
 
-        if gap <= max_gap_ms and len(combined) <= max_chars:
+        # Don't merge across dialogue/speaker boundaries
+        boundary = _is_dialogue_boundary(prev.text, curr.text)
+
+        if gap <= max_gap_ms and len(combined) <= max_chars and not boundary:
             merged[-1] = SubtitleEntry(
                 index=prev.index,
                 start_ms=prev.start_ms,

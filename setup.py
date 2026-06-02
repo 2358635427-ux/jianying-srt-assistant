@@ -8,7 +8,7 @@ from setuptools import setup
 
 APP_NAME = "剪映字幕助手"
 BUNDLE_ID = "com.draft-srt-assistant.app"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
