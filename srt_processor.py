@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import jieba
 import jieba.posseg as pseg
@@ -343,13 +343,13 @@ def redistribute_timestamps(
 # ---------------------------------------------------------------------------
 
 # -- Dialogue boundary detection ------------------------------------------------
+# Content-aware: uses jieba keyword overlap + named-entity tracking to decide
+# whether two subtitle entries belong to the same speaker / continuous thought.
 
-# Speech / conversation verbs — indicate a new speaker may be talking
-_SPEECH_MARKERS: Set[str] = {
-    "说", "道", "问", "答", "讲", "喊", "叫", "嚷", "骂",
-    "哭", "笑", "喝", "唱", "念", "读", "写", "骂", "劝",
-    "回答", "问道", "说道", "答道", "反问", "追问", "笑着说",
-    "哭着说", "大喊", "大叫", "问道", "问道", "轻声说", "低声说",
+# Words that strongly suggest a new speaker (greetings, conversation openers)
+_GREETING_MARKERS: Set[str] = {
+    "你好", "您好", "嗨", "嘿", "哈喽", "大家好", "各位", "请问",
+    "喂", "那个", "话说", "对了", "哎", "哎呀", "哦对了",
 }
 
 # Continuation words — the next line continues the same speaker's thought
@@ -363,11 +363,12 @@ _CONTINUATION_MARKERS: Set[str] = {
     "先", "首先", "随后", "之后", "后来", "不仅", "不光",
     "不只", "除非", "无论", "不管", "既然", "以至", "以便",
     "以免", "省得", "免得", "与其", "宁可", "宁愿",
+    "其实", "反正", "按理", "总之", "不过", "毕竟",
 }
 
 
 def _extract_keywords(text: str) -> Set[str]:
-    """Extract content words (nouns, verbs) for topic comparison."""
+    """Extract content words (nouns, verbs, adjectives) for topic comparison."""
     words = pseg.cut(text)
     return {
         word for word, flag in words
@@ -375,51 +376,95 @@ def _extract_keywords(text: str) -> Set[str]:
     }
 
 
-def _is_dialogue_boundary(prev_text: str, next_text: str) -> bool:
-    """Detect if there is a speaker/topic boundary between two pieces of text.
+def _extract_names(text: str) -> Set[str]:
+    """Extract person names (jieba 'nr' tag) for speaker tracking."""
+    words = pseg.cut(text)
+    return {word for word, flag in words if flag == "nr"}
 
-    Returns True when the two texts likely belong to different speakers or
+
+def _compute_continuity_score(text1: str, text2: str) -> float:
+    """Score 0-1: how likely these two texts belong to the same speaker.
+
+    1.0 = nearly certain same speaker (high keyword overlap)
+    0.0 = nearly certain different speaker (no overlap, different names)
+    """
+    kw1 = _extract_keywords(text1)
+    kw2 = _extract_keywords(text2)
+
+    if not kw1 or not kw2:
+        return 0.50  # not enough data → neutral
+
+    # Jaccard similarity of content words
+    union = kw1 | kw2
+    overlap = kw1 & kw2
+    if not union:
+        return 0.50
+    jaccard = len(overlap) / len(union)
+
+    # Name-shift penalty: different person names → likely different speaker
+    names1 = _extract_names(text1)
+    names2 = _extract_names(text2)
+    name_penalty = 0.0
+    if names1 and names2:
+        name_overlap = names1 & names2
+        if not name_overlap:
+            name_penalty = 0.40  # strong penalty for completely different names
+
+    score = max(0.0, jaccard - name_penalty)
+    return score
+
+
+def _is_dialogue_boundary(prev_text: str, next_text: str) -> bool:
+    """Content-aware dialogue boundary detection.
+
+    Returns True when two texts likely belong to different speakers or
     independent sentences that should NOT be merged together.
+
+    Decision order (strongest → weakest):
+    1. Greetings → boundary
+    2. Continuation markers → NOT boundary (override)
+    3. Content continuity via keyword/name overlap
+    4. Punctuation-based heuristics (augment, not decide)
     """
     prev = prev_text.rstrip()
     nxt = next_text.lstrip()
     if not prev or not nxt:
         return False
 
-    # ── 1. Strong boundary: sentence-ending or speech-intro punctuation ──
-    if prev.endswith(("。", "！", "？", ".", "!", "?", "」", "』", "：", "∶")):
-        # Exception: next line starts with a conjunction → same speaker continues
-        ch1 = nxt[:1] if nxt else ""
-        ch2 = nxt[:2] if len(nxt) >= 2 else nxt[:1] if nxt else ""
-        if ch1 in _CONTINUATION_MARKERS or ch2 in _CONTINUATION_MARKERS:
-            return False
-        return True
-
-    # ── 2. Speech-verb markers in next entry ──
-    # If the next line opens with a speech verb, likely a new speaker
+    # ── 1. Greeting/openers → new speaker ──
     first_two = nxt[:2]
-    first_four = nxt[:4]
-    if first_two in _SPEECH_MARKERS or first_four in _SPEECH_MARKERS:
-        # Check that prev doesn't end mid-thought (comma, semicolon)
-        if not prev.endswith(("，", ",", "；", ";", "、", "…")):
-            return True
-
-    # ── 3. Question → non-question transition ──
-    if prev.endswith(("？", "?")):
-        # New speaker answering is very common
+    if first_two in _GREETING_MARKERS or nxt[:4] in _GREETING_MARKERS:
         return True
 
-    # ── 4. Topic shift via keyword overlap (lightweight NLP) ──
-    kw_prev = _extract_keywords(prev)
-    kw_next = _extract_keywords(nxt)
-    # Only apply topic detection when both sides have enough content words
-    if len(kw_prev) >= 3 and len(kw_next) >= 3:
-        overlap = kw_prev & kw_next
-        min_size = min(len(kw_prev), len(kw_next))
-        # If <20% keyword overlap, likely a different speaker/topic
-        if len(overlap) / min_size < 0.20:
-            return True
+    # ── 2. Continuation markers → same speaker (STRONG override) ──
+    ch1 = nxt[:1] if nxt else ""
+    ch2 = nxt[:2] if len(nxt) >= 2 else ""
+    if ch1 in _CONTINUATION_MARKERS or ch2 in _CONTINUATION_MARKERS:
+        return False
 
+    # ── 3. Content continuity (core signal) ──
+    continuity = _compute_continuity_score(prev, nxt)
+
+    if continuity >= 0.50:
+        return False   # significant topic overlap → same speaker
+    if continuity <= 0.10:
+        return True    # almost no overlap → different speaker
+
+    # ── 4. Sentence-ending punctuation + low/moderate continuity ──
+    has_sentence_end = prev.endswith(
+        ("。", "！", "？", ".", "!", "?", "」", "』", "：", "∶")
+    )
+    if has_sentence_end and continuity < 0.35:
+        return True
+
+    # Question-answer pairs: often different speakers but not always
+    is_question = prev.endswith(("？", "?"))
+    if is_question and continuity < 0.30:
+        return True
+
+    # ── 5. Default: lean toward SAME speaker (merge) when uncertain ──
+    # Subtitle dialogues often have short sentences with few keywords,
+    # so neutral continuity is not a reliable boundary signal.
     return False
 
 
@@ -427,10 +472,13 @@ def merge_short_entries(
     entries: List[SubtitleEntry],
     max_chars: int,
     max_gap_ms: int = 500,
+    detect_dialogue: bool = True,
 ) -> List[SubtitleEntry]:
     """
     Merge adjacent entries if their combined text fits within max_chars
     and the gap between them is <= max_gap_ms.
+
+    When detect_dialogue=True, prevents merging across speaker/topic boundaries.
     """
     if len(entries) < 2:
         return entries
@@ -442,8 +490,7 @@ def merge_short_entries(
         gap = curr.start_ms - prev.end_ms
         combined = prev.text + " " + curr.text
 
-        # Don't merge across dialogue/speaker boundaries
-        boundary = _is_dialogue_boundary(prev.text, curr.text)
+        boundary = detect_dialogue and _is_dialogue_boundary(prev.text, curr.text)
 
         if gap <= max_gap_ms and len(combined) <= max_chars and not boundary:
             merged[-1] = SubtitleEntry(
@@ -468,6 +515,7 @@ def process_srt_entries(
     mode: str = "general",
     merge: bool = True,
     capitalize: bool = True,
+    detect_dialogue: bool = True,
 ) -> List[SubtitleEntry]:
     """
     Full processing pipeline:
@@ -500,7 +548,7 @@ def process_srt_entries(
 
     # Optional merge
     if merge:
-        result = merge_short_entries(result, max_chars)
+        result = merge_short_entries(result, max_chars, detect_dialogue=detect_dialogue)
 
     # Sentence-level capitalization: only capitalize when a new sentence starts
     if mode == "en_only" and capitalize:
@@ -575,7 +623,7 @@ def _capitalize_entry_sentences(text: str, is_sentence_start: bool) -> str:
 # Convenience
 # ---------------------------------------------------------------------------
 
-def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize: bool = True) -> str:
+def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize: bool = True, detect_dialogue: bool = True) -> str:
     """
     High-level entry point: parse SRT text, process it, return new SRT text.
     If english_limit is None, uses the same limit for both languages
@@ -608,7 +656,7 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
             result.extend(split_entries)
 
     result = _fix_overlaps(result)
-    result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit))
+    result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit), detect_dialogue=detect_dialogue)
 
     # Sentence-level capitalization
     if mode == "en_only" and capitalize:

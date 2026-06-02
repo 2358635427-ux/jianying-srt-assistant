@@ -884,6 +884,14 @@ class MainWindow(QMainWindow):
             "句号/问号/感叹号后自动识别新句子"
         )
         radio_row.addWidget(self._chk_capitalize)
+
+        self._chk_dialogue = QCheckBox("智能分句")
+        self._chk_dialogue.setChecked(True)
+        self._chk_dialogue.setToolTip(
+            "合并短句时智能识别说话人切换：通过关键词重叠度、"
+            "人名变化、问候语等判断是否同一说话人，避免不同人的台词被合并"
+        )
+        radio_row.addWidget(self._chk_dialogue)
         radio_row.addStretch()
         layout.addLayout(radio_row)
 
@@ -1155,11 +1163,13 @@ class MainWindow(QMainWindow):
                 processed = process_srt_entries(
                     entries, max_chars=en_limit, mode="en_only", merge=do_merge,
                     capitalize=self._chk_capitalize.isChecked(),
+                    detect_dialogue=self._chk_dialogue.isChecked(),
                 )
             else:
                 processed = self._process_with_per_entry_limits(
                     entries, ch_limit, en_limit, do_merge,
                     capitalize=self._chk_capitalize.isChecked(),
+                    detect_dialogue=self._chk_dialogue.isChecked(),
                 )
         except Exception as e:
             QMessageBox.critical(self, "错误", f"处理失败：\n{e}")
@@ -1183,6 +1193,7 @@ class MainWindow(QMainWindow):
     def _process_with_per_entry_limits(
         self, entries: list, ch_limit: int, en_limit: int, merge: bool,
         capitalize: bool = False,
+        detect_dialogue: bool = True,
     ) -> list:
         import re
         result: list = []
@@ -1201,7 +1212,7 @@ class MainWindow(QMainWindow):
 
         result = _fix_overlaps(result)
         if merge:
-            result = merge_short_entries(result, max(ch_limit, en_limit))
+            result = merge_short_entries(result, max(ch_limit, en_limit), detect_dialogue=detect_dialogue)
 
         # Sentence-level capitalization (works in both modes)
         if capitalize:
@@ -1234,6 +1245,9 @@ class MainWindow(QMainWindow):
         self._chk_capitalize.setChecked(
             bool(self._settings.value("capitalize", True))
         )
+        self._chk_dialogue.setChecked(
+            bool(self._settings.value("detect_dialogue", True))
+        )
 
         # Restore text lightness (or default)
         saved_text = int(self._settings.value("text_lightness", DEFAULT_TEXT_LIGHTNESS))
@@ -1254,6 +1268,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("english_limit", self._spin_english.value())
         self._settings.setValue("merge_short", self._chk_merge.isChecked())
         self._settings.setValue("capitalize", self._chk_capitalize.isChecked())
+        self._settings.setValue("detect_dialogue", self._chk_dialogue.isChecked())
         self._settings.setValue("text_lightness", self._text_lightness)
         self._save_wp_settings()
 
