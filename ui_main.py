@@ -877,13 +877,20 @@ class MainWindow(QMainWindow):
         self._mode_en.toggled.connect(self._on_mode_changed)
         radio_row.addWidget(self._mode_en)
 
-        self._chk_capitalize = QCheckBox("句首大写")
-        self._chk_capitalize.setChecked(True)
-        self._chk_capitalize.setToolTip(
-            "英文句首自动大写：每句完整的话开头字母大写，"
-            "句号/问号/感叹号后自动识别新句子"
+        self._chk_cap_line = QCheckBox("首字母大写")
+        self._chk_cap_line.setChecked(True)
+        self._chk_cap_line.setToolTip(
+            "每行字幕的首字母自动大写（简单模式）"
         )
-        radio_row.addWidget(self._chk_capitalize)
+        radio_row.addWidget(self._chk_cap_line)
+
+        self._chk_cap_sentence = QCheckBox("句首大写")
+        self._chk_cap_sentence.setChecked(True)
+        self._chk_cap_sentence.setToolTip(
+            "仅完整句子的开头字母大写，句号/问号/感叹号后识别新句子，"
+            "句中的续行保持小写（智能模式，勾选后优先于首字母大写）"
+        )
+        radio_row.addWidget(self._chk_cap_sentence)
 
         self._chk_dialogue = QCheckBox("智能分句")
         self._chk_dialogue.setChecked(True)
@@ -1159,16 +1166,18 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            cap_line = self._chk_cap_line.isChecked()
+            cap_sentence = self._chk_cap_sentence.isChecked()
             if is_en:
                 processed = process_srt_entries(
                     entries, max_chars=en_limit, mode="en_only", merge=do_merge,
-                    capitalize=self._chk_capitalize.isChecked(),
+                    capitalize_line=cap_line, capitalize_sentence=cap_sentence,
                     detect_dialogue=self._chk_dialogue.isChecked(),
                 )
             else:
                 processed = self._process_with_per_entry_limits(
                     entries, ch_limit, en_limit, do_merge,
-                    capitalize=self._chk_capitalize.isChecked(),
+                    capitalize_line=cap_line, capitalize_sentence=cap_sentence,
                     detect_dialogue=self._chk_dialogue.isChecked(),
                 )
         except Exception as e:
@@ -1192,7 +1201,8 @@ class MainWindow(QMainWindow):
 
     def _process_with_per_entry_limits(
         self, entries: list, ch_limit: int, en_limit: int, merge: bool,
-        capitalize: bool = False,
+        capitalize_line: bool = False,
+        capitalize_sentence: bool = True,
         detect_dialogue: bool = True,
     ) -> list:
         import re
@@ -1214,12 +1224,15 @@ class MainWindow(QMainWindow):
         if merge:
             result = merge_short_entries(result, max(ch_limit, en_limit), detect_dialogue=detect_dialogue)
 
-        # Sentence-level capitalization (works in both modes)
-        if capitalize:
+        # Capitalization: sentence-level takes priority over per-line
+        if capitalize_sentence:
             _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
             for i, e in enumerate(result):
                 is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
                 e.text = _capitalize_entry_sentences(e.text, is_start)
+        elif capitalize_line:
+            for e in result:
+                e.text = _capitalize_sentence(e.text)
 
         for i, e in enumerate(result, 1):
             e.index = i
@@ -1242,8 +1255,11 @@ class MainWindow(QMainWindow):
         self._chk_merge.setChecked(
             bool(self._settings.value("merge_short", True))
         )
-        self._chk_capitalize.setChecked(
-            bool(self._settings.value("capitalize", True))
+        self._chk_cap_line.setChecked(
+            bool(self._settings.value("capitalize_line", True))
+        )
+        self._chk_cap_sentence.setChecked(
+            bool(self._settings.value("capitalize_sentence", True))
         )
         self._chk_dialogue.setChecked(
             bool(self._settings.value("detect_dialogue", True))
@@ -1267,7 +1283,8 @@ class MainWindow(QMainWindow):
         self._settings.setValue("chinese_limit", self._spin_chinese.value())
         self._settings.setValue("english_limit", self._spin_english.value())
         self._settings.setValue("merge_short", self._chk_merge.isChecked())
-        self._settings.setValue("capitalize", self._chk_capitalize.isChecked())
+        self._settings.setValue("capitalize_line", self._chk_cap_line.isChecked())
+        self._settings.setValue("capitalize_sentence", self._chk_cap_sentence.isChecked())
         self._settings.setValue("detect_dialogue", self._chk_dialogue.isChecked())
         self._settings.setValue("text_lightness", self._text_lightness)
         self._save_wp_settings()

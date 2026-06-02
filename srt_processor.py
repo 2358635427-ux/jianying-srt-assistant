@@ -348,9 +348,59 @@ def redistribute_timestamps(
 
 # Words that strongly suggest a new speaker (greetings, conversation openers)
 _GREETING_MARKERS: Set[str] = {
+    # Chinese
     "你好", "您好", "嗨", "嘿", "哈喽", "大家好", "各位", "请问",
     "喂", "那个", "话说", "对了", "哎", "哎呀", "哦对了",
 }
+
+# English greeting/openers — full words
+_EN_GREETINGS: Set[str] = {
+    "hello", "hi", "hey", "yo", "well", "okay", "ok", "alright",
+    "oh", "ah", "uh", "um", "eh", "wow", "oops", "ugh",
+    "good morning", "good afternoon", "good evening",
+}
+
+# Address terms / vocatives — lines starting with these are independent utterances
+_EN_VOCATIVES: Set[str] = {
+    "dad", "mom", "mum", "daddy", "mommy", "mummy",
+    "sir", "ma'am", "madam", "mister", "miss", "doctor",
+    "professor", "officer", "boss", "captain", "commander",
+    "bro", "dude", "man", "buddy", "pal", "mate",
+    "honey", "darling", "sweetie", "sweetheart", "baby", "babe",
+    "son", "dear", "love", "boy", "girl", "guys", "folks",
+    "mr.", "mrs.", "ms.", "dr.",
+}
+
+# English exclamations — short standalone utterances
+_EN_EXCLAMATIONS: Set[str] = {
+    "yes", "no", "yeah", "nope", "yep", "sure", "maybe",
+    "thanks", "thank you", "please", "sorry", "excuse me",
+    "great", "fine", "good", "perfect", "excellent", "wonderful",
+    "stop", "wait", "look", "listen", "come on", "go",
+    "what", "why", "when", "where", "who", "how",
+    "really", "seriously", "absolutely", "definitely", "exactly",
+    "help", "watch out", "careful", "hurry", "quick",
+}
+
+def _extract_first_token(text: str) -> str:
+    """Extract the first word/token from text (before any punctuation or space)."""
+    text = text.lstrip()
+    m = re.match(r"[\w'.]+", text)
+    return m.group(0).lower() if m else ""
+
+
+def _looks_like_conversation_starter(text: str) -> bool:
+    """Check if text starts like a new speaker's turn (greeting / vocative / exclamation)."""
+    first = _extract_first_token(text)
+    if not first:
+        return False
+    if first in _EN_GREETINGS or first in _EN_VOCATIVES or first in _EN_EXCLAMATIONS:
+        return True
+    # Also check 2-word openers: "good morning", "thank you", etc.
+    first_two = " ".join(text.lstrip().split()[:2]).lower().rstrip(",.;:!?")
+    if first_two in _EN_GREETINGS or first_two in _EN_EXCLAMATIONS:
+        return True
+    return False
 
 # Continuation words — the next line continues the same speaker's thought
 _CONTINUATION_MARKERS: Set[str] = {
@@ -431,9 +481,12 @@ def _is_dialogue_boundary(prev_text: str, next_text: str) -> bool:
     if not prev or not nxt:
         return False
 
-    # ── 1. Greeting/openers → new speaker ──
-    first_two = nxt[:2]
-    if first_two in _GREETING_MARKERS or nxt[:4] in _GREETING_MARKERS:
+    # ── 1. Greeting/openers/vocatives → new speaker ──
+    first_two_cn = nxt[:2]
+    if first_two_cn in _GREETING_MARKERS or nxt[:4] in _GREETING_MARKERS:
+        return True
+    # English conversation starters (greetings, dad/mom/sir, yes/no, etc.)
+    if _looks_like_conversation_starter(nxt):
         return True
 
     # ── 2. Continuation markers → same speaker (STRONG override) ──
@@ -514,7 +567,8 @@ def process_srt_entries(
     max_chars: int,
     mode: str = "general",
     merge: bool = True,
-    capitalize: bool = True,
+    capitalize_line: bool = False,
+    capitalize_sentence: bool = True,
     detect_dialogue: bool = True,
 ) -> List[SubtitleEntry]:
     """
@@ -550,12 +604,16 @@ def process_srt_entries(
     if merge:
         result = merge_short_entries(result, max_chars, detect_dialogue=detect_dialogue)
 
-    # Sentence-level capitalization: only capitalize when a new sentence starts
-    if mode == "en_only" and capitalize:
-        _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
-        for i, e in enumerate(result):
-            is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
-            e.text = _capitalize_entry_sentences(e.text, is_start)
+    # Capitalization (both modes — sentence-level takes priority)
+    if mode == "en_only":
+        if capitalize_sentence:
+            _SENTENCE_END_RE = re.compile(r"[.!?。]['\")」】]?\s*$")
+            for i, e in enumerate(result):
+                is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
+                e.text = _capitalize_entry_sentences(e.text, is_start)
+        elif capitalize_line:
+            for e in result:
+                e.text = _capitalize_sentence(e.text)
 
     # Re-index
     for i, e in enumerate(result, 1):
@@ -623,7 +681,7 @@ def _capitalize_entry_sentences(text: str, is_sentence_start: bool) -> str:
 # Convenience
 # ---------------------------------------------------------------------------
 
-def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize: bool = True, detect_dialogue: bool = True) -> str:
+def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize_line: bool = False, capitalize_sentence: bool = True, detect_dialogue: bool = True) -> str:
     """
     High-level entry point: parse SRT text, process it, return new SRT text.
     If english_limit is None, uses the same limit for both languages
@@ -658,12 +716,16 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
     result = _fix_overlaps(result)
     result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit), detect_dialogue=detect_dialogue)
 
-    # Sentence-level capitalization
-    if mode == "en_only" and capitalize:
-        _SENTENCE_END_RE2 = re.compile(r"[.!?。]['\")」】]?\s*$")
-        for i, e in enumerate(result):
-            is_start = (i == 0) or bool(_SENTENCE_END_RE2.search(result[i - 1].text.rstrip()))
-            e.text = _capitalize_entry_sentences(e.text, is_start)
+    # Capitalization
+    if mode == "en_only":
+        if capitalize_sentence:
+            _SENTENCE_END_RE2 = re.compile(r"[.!?。]['\")」】]?\s*$")
+            for i, e in enumerate(result):
+                is_start = (i == 0) or bool(_SENTENCE_END_RE2.search(result[i - 1].text.rstrip()))
+                e.text = _capitalize_entry_sentences(e.text, is_start)
+        elif capitalize_line:
+            for e in result:
+                e.text = _capitalize_sentence(e.text)
 
     for i, e in enumerate(result, 1):
         e.index = i
