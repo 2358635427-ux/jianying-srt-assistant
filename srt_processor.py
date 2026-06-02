@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+import jieba
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -158,8 +160,34 @@ def _is_primarily_cjk(text: str) -> bool:
     return cjk_count / len(letters) > 0.4
 
 
+def _find_cjk_split_pos(text: str, max_chars: int) -> int:
+    """Find the best split position that doesn't break a Chinese word."""
+    search_start = int(max_chars * 0.6)
+
+    # First, try to find a punctuation split point
+    chunk = text[:max_chars]
+    match = None
+    for m in _CJK_SPLIT_RE.finditer(chunk[search_start:]):
+        match = m
+    if match:
+        return search_start + match.end()
+
+    # No punctuation — use jieba word boundaries
+    tokens = list(jieba.tokenize(text))
+    # Scan backwards from max_chars to find a legal split position
+    for p in range(max_chars, search_start - 1, -1):
+        legal = True
+        for _word, start, end in tokens:
+            if start < p < end:
+                legal = False
+                break
+        if legal:
+            return p
+    return max_chars
+
+
 def _split_cjk_line(text: str, max_chars: int) -> List[str]:
-    """Split a CJK text line at punctuation boundaries, respecting max_chars."""
+    """Split a CJK text line at word/punctuation boundaries, respecting max_chars."""
     # First, split at punctuation boundaries
     segments: List[str] = []
     current = ""
@@ -184,17 +212,7 @@ def _split_cjk_line(text: str, max_chars: int) -> List[str]:
     final: List[str] = []
     for seg in result:
         while len(seg) > max_chars:
-            # Find best split point within the last max_chars chars
-            chunk = seg[:max_chars]
-            # Try to find a split point in the last 40% of chunk
-            match = None
-            search_start = int(max_chars * 0.6)
-            for m in _CJK_SPLIT_RE.finditer(chunk[search_start:]):
-                match = m
-            if match:
-                split_at = search_start + match.end()
-            else:
-                split_at = max_chars
+            split_at = _find_cjk_split_pos(seg, max_chars)
             final.append(seg[:split_at])
             seg = seg[split_at:].lstrip()
         if seg.strip():
@@ -399,10 +417,12 @@ def process_srt_entries(
     if merge:
         result = merge_short_entries(result, max_chars)
 
-    # Optionally apply English mode capitalization
+    # Sentence-level capitalization: only capitalize when a new sentence starts
     if mode == "en_only" and capitalize:
-        for e in result:
-            e.text = _capitalize_sentence(e.text)
+        _SENTENCE_END_RE = re.compile(r"[.!?]['\")」】]?\s*$")
+        for i, e in enumerate(result):
+            is_start = (i == 0) or bool(_SENTENCE_END_RE.search(result[i - 1].text.rstrip()))
+            e.text = _capitalize_entry_sentences(e.text, is_start)
 
     # Re-index
     for i, e in enumerate(result, 1):
@@ -426,8 +446,11 @@ def _fix_overlaps(entries: List[SubtitleEntry]) -> List[SubtitleEntry]:
     return fixed
 
 
+_SENTENCE_BOUNDARY_RE = re.compile(r'[.!?]["\'」】)]?\s+([a-z])')
+
+
 def _capitalize_sentence(text: str) -> str:
-    """Capitalize the first letter of the sentence."""
+    """Capitalize the first letter of the text (used for sentence starts)."""
     if not text:
         return text
 
@@ -435,6 +458,32 @@ def _capitalize_sentence(text: str) -> str:
         if ch.isalpha():
             return text[:i] + ch.upper() + text[i + 1:]
     return text
+
+
+def _capitalize_entry_sentences(text: str, is_sentence_start: bool) -> str:
+    """Apply sentence-level capitalization to a subtitle entry.
+
+    - If is_sentence_start, capitalize the first alpha character.
+    - Always capitalize letters after sentence-ending punctuation (.!?).
+    """
+    if not text:
+        return text
+
+    chars = list(text)
+
+    # Capitalize first letter if this entry starts a new sentence
+    if is_sentence_start:
+        for i, ch in enumerate(chars):
+            if ch.isalpha():
+                chars[i] = ch.upper()
+                break
+
+    # Capitalize after sentence-ending punctuation within the entry
+    for m in _SENTENCE_BOUNDARY_RE.finditer(text):
+        idx = m.start(1)
+        chars[idx] = chars[idx].upper()
+
+    return ''.join(chars)
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +525,12 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
     result = _fix_overlaps(result)
     result = merge_short_entries(result, max(chinese_limit, english_limit or chinese_limit))
 
+    # Sentence-level capitalization
     if mode == "en_only" and capitalize:
-        for e in result:
-            e.text = _capitalize_sentence(e.text)
+        _SENTENCE_END_RE2 = re.compile(r"[.!?]['\")」】]?\s*$")
+        for i, e in enumerate(result):
+            is_start = (i == 0) or bool(_SENTENCE_END_RE2.search(result[i - 1].text.rstrip()))
+            e.text = _capitalize_entry_sentences(e.text, is_start)
 
     for i, e in enumerate(result, 1):
         e.index = i
