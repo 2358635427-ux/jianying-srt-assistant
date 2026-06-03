@@ -15,13 +15,18 @@ from pathlib import Path
 _project_dir = Path(SPECPATH).resolve()
 sys.path.insert(0, str(_project_dir))
 
-# --- collect PyQt6 hidden imports ----------------------------------------
+# --- collect hidden imports -----------------------------------------------
 _pyqt6_hidden = [
     "PyQt6",
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
     "PyQt6.sip",
+    # jieba uses lazy-loading, PyInstaller won't detect it automatically
+    "jieba",
+    "jieba.posseg",
+    "jieba.finalseg",
+    "jieba.lac",
 ]
 
 block_cipher = None
