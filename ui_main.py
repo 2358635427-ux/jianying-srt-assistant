@@ -46,7 +46,9 @@ from srt_processor import (
     _is_primarily_cjk,
     _capitalize_entry_sentences,
     _capitalize_sentence,
+    _capitalize_pronoun_i,
     _is_sentence_boundary,
+    _normalize_subtitle_text,
     SubtitleEntry,
 )
 
@@ -712,7 +714,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._wp_clear_btn)
 
         # --- Version badge ---
-        badge = QLabel("v1.5")
+        badge = QLabel("v1.6")
         badge.setStyleSheet(
             "font-size: 10px; color: #6a6470; background: rgba(30, 30, 40, 0.90); "
             "border: 1px solid #2e2e3a; border-radius: 9px; padding: 1px 9px;"
@@ -901,6 +903,14 @@ class MainWindow(QMainWindow):
             "人名变化、问候语等判断是否同一说话人，避免不同人的台词被合并"
         )
         radio_row.addWidget(self._chk_dialogue)
+
+        self._chk_normalize = QCheckBox("规范标点")
+        self._chk_normalize.setChecked(True)
+        self._chk_normalize.setToolTip(
+            "删除句尾标点（. , ! ?），保留缩写（Mr. Mrs. Ms.）、"
+            "连字符（twenty-one）和缩写撇号（you're it's）"
+        )
+        radio_row.addWidget(self._chk_normalize)
         radio_row.addStretch()
         layout.addLayout(radio_row)
 
@@ -1170,17 +1180,20 @@ class MainWindow(QMainWindow):
         try:
             cap_line = self._chk_cap_line.isChecked()
             cap_sentence = self._chk_cap_sentence.isChecked()
+            do_normalize = self._chk_normalize.isChecked()
             if is_en:
                 processed = process_srt_entries(
                     entries, max_chars=en_limit, mode="en_only", merge=do_merge,
                     capitalize_line=cap_line, capitalize_sentence=cap_sentence,
                     detect_dialogue=self._chk_dialogue.isChecked(),
+                    normalize=do_normalize,
                 )
             else:
                 processed = self._process_with_per_entry_limits(
                     entries, ch_limit, en_limit, do_merge,
                     capitalize_line=cap_line, capitalize_sentence=cap_sentence,
                     detect_dialogue=self._chk_dialogue.isChecked(),
+                    normalize=do_normalize,
                 )
         except Exception as e:
             QMessageBox.critical(self, "错误", f"处理失败：\n{e}")
@@ -1206,6 +1219,7 @@ class MainWindow(QMainWindow):
         capitalize_line: bool = False,
         capitalize_sentence: bool = True,
         detect_dialogue: bool = True,
+        normalize: bool = True,
     ) -> list:
         import re
         result: list = []
@@ -1231,7 +1245,16 @@ class MainWindow(QMainWindow):
             from srt_processor import _split_at_dialogue_boundaries
             result = _split_at_dialogue_boundaries(result)
 
+        # Text normalization: remove sentence punctuation
+        if normalize:
+            for e in result:
+                e.text = _normalize_subtitle_text(e.text)
+
         # Capitalization: sentence-level takes priority over per-line
+        # Always capitalize standalone 'i' → 'I' when any capitalization is on
+        if capitalize_sentence or capitalize_line:
+            for e in result:
+                e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
             for i, e in enumerate(result):
                 is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
@@ -1270,6 +1293,9 @@ class MainWindow(QMainWindow):
         self._chk_dialogue.setChecked(
             bool(self._settings.value("detect_dialogue", True))
         )
+        self._chk_normalize.setChecked(
+            bool(self._settings.value("normalize", True))
+        )
 
         # Restore text lightness (or default)
         saved_text = int(self._settings.value("text_lightness", DEFAULT_TEXT_LIGHTNESS))
@@ -1292,6 +1318,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("capitalize_line", self._chk_cap_line.isChecked())
         self._settings.setValue("capitalize_sentence", self._chk_cap_sentence.isChecked())
         self._settings.setValue("detect_dialogue", self._chk_dialogue.isChecked())
+        self._settings.setValue("normalize", self._chk_normalize.isChecked())
         self._settings.setValue("text_lightness", self._text_lightness)
         self._save_wp_settings()
 
@@ -1308,7 +1335,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "关于 剪映字幕助手",
             "<h3 style='color:#d4a040'>剪映字幕助手</h3>"
-            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.5</p>"
+            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.6</p>"
             "<p style='color:#8a8070'>"
             "专门针对剪映的字幕后处理工具。<br>"
             "支持单行字幕字数限制（中/英文可配置），<br>"

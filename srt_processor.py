@@ -575,6 +575,49 @@ def _is_sentence_boundary(prev_text: str, next_text: str) -> bool:
     return False
 
 
+# -- Subtitle text normalization ------------------------------------------------
+# Title abbreviations that keep their period
+_TITLE_ABBREVS: Set[str] = {
+    "Mr", "Mrs", "Ms", "Miss", "Dr", "Prof", "St", "Sr", "Jr",
+    "Mt", "Capt", "Col", "Gen", "Lt", "Maj", "Rev", "Hon",
+}
+_TITLE_RE = re.compile(
+    r'\b(' + '|'.join(re.escape(a) for a in _TITLE_ABBREVS) + r')\.',
+    re.IGNORECASE,
+)
+
+
+def _normalize_subtitle_text(text: str) -> str:
+    """Remove sentence punctuation from subtitle text while preserving
+    contractions (you're, it's), compound words (twenty-one), and
+    title abbreviations (Mr., Mrs., Ms., Dr.).
+
+    Strips: . , ! ?
+    Keeps:  ' (contractions)  - (compounds)  . (titles)
+    """
+    if not text:
+        return text
+
+    # Step 1: protect title abbreviations (Mr. → Mr__TDOT__)
+    text = _TITLE_RE.sub(r'\1__TDOT__', text)
+
+    # Step 2: remove . , ! ? (sentence punctuation)
+    for ch in ('.', ',', '!', '?'):
+        text = text.replace(ch, '')
+
+    # Step 3: restore title dots
+    text = text.replace('__TDOT__', '.')
+
+    # Step 4: clean up whitespace
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
+
+
+def _capitalize_pronoun_i(text: str) -> str:
+    """Capitalize standalone lowercase 'i' to 'I' everywhere in text."""
+    return re.sub(r'\bi\b', 'I', text)
+
+
 def _extract_keywords(text: str) -> Set[str]:
     """Extract content words (nouns, verbs, adjectives) for topic comparison.
 
@@ -826,6 +869,7 @@ def process_srt_entries(
     capitalize_line: bool = False,
     capitalize_sentence: bool = True,
     detect_dialogue: bool = True,
+    normalize: bool = True,
 ) -> List[SubtitleEntry]:
     """
     Full processing pipeline:
@@ -864,8 +908,16 @@ def process_srt_entries(
     if detect_dialogue:
         result = _split_at_dialogue_boundaries(result)
 
+    # Text normalization: remove sentence punctuation, preserve contractions/compounds/titles
+    if normalize:
+        for e in result:
+            e.text = _normalize_subtitle_text(e.text)
+
     # Capitalization (both modes — sentence-level takes priority)
     if mode == "en_only":
+        # Always capitalize standalone 'i' → 'I' in English mode
+        for e in result:
+            e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
             for i, e in enumerate(result):
                 is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
@@ -940,7 +992,7 @@ def _capitalize_entry_sentences(text: str, is_sentence_start: bool) -> str:
 # Convenience
 # ---------------------------------------------------------------------------
 
-def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize_line: bool = False, capitalize_sentence: bool = True, detect_dialogue: bool = True) -> str:
+def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | None, mode: str, capitalize_line: bool = False, capitalize_sentence: bool = True, detect_dialogue: bool = True, normalize: bool = True) -> str:
     """
     High-level entry point: parse SRT text, process it, return new SRT text.
     If english_limit is None, uses the same limit for both languages
@@ -978,8 +1030,15 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
     if detect_dialogue:
         result = _split_at_dialogue_boundaries(result)
 
+    # Text normalization: remove sentence punctuation
+    if normalize:
+        for e in result:
+            e.text = _normalize_subtitle_text(e.text)
+
     # Capitalization
     if mode == "en_only":
+        for e in result:
+            e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
             for i, e in enumerate(result):
                 is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
