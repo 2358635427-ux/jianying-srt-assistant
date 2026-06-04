@@ -618,6 +618,119 @@ def _capitalize_pronoun_i(text: str) -> str:
     return re.sub(r'\bi\b', 'I', text)
 
 
+# -- Proper noun capitalization -------------------------------------------------
+# Unambiguous proper nouns: safe to capitalize because they have no conflicting
+# common-noun meaning. Ambiguous words (may, march, grace, rose, apple, etc.)
+# are deliberately EXCLUDED to avoid false positives.
+
+_PROPER_NOUNS: Set[str] = {
+    # Months
+    "january", "february", "march", "april", "june",
+    "july", "august", "september", "october", "november", "december",
+    # Days
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    # Continents
+    "asia", "europe", "africa", "antarctica", "oceania",
+    # Countries
+    "china", "england", "france", "germany", "japan", "korea",
+    "india", "russia", "canada", "australia", "brazil", "italy", "spain",
+    "mexico", "egypt", "greece", "sweden", "norway", "denmark",
+    "finland", "poland", "ukraine", "thailand", "vietnam", "indonesia",
+    "malaysia", "singapore", "pakistan", "bangladesh", "philippines",
+    "nigeria", "kenya", "argentina", "chile", "colombia",
+    "peru", "venezuela", "portugal", "belgium", "switzerland",
+    "austria", "hungary", "romania", "ireland", "israel",
+    "iran", "iraq", "syria", "lebanon", "jordan",
+    "kuwait", "qatar", "oman", "yemen", "mongolia", "nepal",
+    "cambodia", "laos", "myanmar", "ethiopia", "ghana", "morocco",
+    "iceland", "croatia", "serbia", "bulgaria", "lithuania", "latvia",
+    "estonia", "slovenia", "albania", "armenia", "georgia",
+    # Nationalities / Languages
+    "chinese", "english", "french", "german", "japanese", "korean",
+    "russian", "italian", "spanish", "arabic", "dutch", "swedish",
+    "norwegian", "danish", "finnish", "polish", "ukrainian",
+    "portuguese", "greek", "turkish", "hebrew", "latin",
+    "hindi", "bengali", "urdu", "swahili", "vietnamese",
+    # Major cities
+    "beijing", "shanghai", "tokyo", "london", "paris",
+    "berlin", "rome", "madrid", "moscow", "seoul",
+    "bangkok", "dubai", "sydney", "melbourne",
+    "toronto", "vancouver", "montreal", "mumbai", "delhi", "cairo",
+    "istanbul", "vienna", "prague", "warsaw", "budapest", "athens",
+    "oslo", "helsinki", "lisbon", "brussels", "amsterdam",
+    "chicago", "boston", "seattle", "philadelphia", "miami",
+    "houston", "phoenix", "detroit", "denver", "atlanta",
+    "baltimore", "dallas", "portland", "las vegas", "orlando",
+    # US States
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "ohio", "oklahoma", "oregon", "tennessee", "texas",
+    "utah", "vermont", "virginia", "wisconsin", "wyoming",
+    # Oceans / Seas / Rivers / Mountains
+    "pacific", "atlantic", "mediterranean", "caribbean", "arctic",
+    "nile", "amazon", "mississippi", "yangtze", "ganges",
+    "himalayas", "alps", "rockies", "andes",
+    # Holidays
+    "christmas", "easter", "thanksgiving", "halloween",
+    "hanukkah", "diwali", "ramadan",
+    # Organizations / Brands (single-meaning proper nouns)
+    "unesco", "nato", "nasa", "fbi", "cia",
+    "hollywood", "broadway",
+    "google", "microsoft", "facebook", "amazon", "twitter",
+    "tiktok", "youtube", "netflix", "spotify", "uber", "tesla",
+    "nintendo", "playstation", "xbox",
+    "disney", "marvel", "starbucks", "nike", "adidas",
+}
+
+# Fixed-form capitalization: always replace these with correct form
+_ALWAYS_CAPS: Dict[str, str] = {
+    "ok": "OK", "okay": "OK",
+    "im": "I'm", "ive": "I've", "ill": "I'll", "id": "I'd",
+    "dont": "Don't", "cant": "Can't", "wont": "Won't",
+    "isnt": "Isn't", "arent": "Aren't", "wasnt": "Wasn't",
+    "werent": "Weren't", "hasnt": "Hasn't", "havent": "Haven't",
+    "hadnt": "Hadn't", "doesnt": "Doesn't", "didnt": "Didn't",
+    "couldnt": "Couldn't", "wouldnt": "Wouldn't", "shouldnt": "Shouldn't",
+    "theyd": "They'd", "theyll": "They'll", "theyve": "They've",
+    "wed": "We'd", "well": "We'll", "weve": "We've", "were": "We're",
+    "youd": "You'd", "youll": "You'll", "youve": "You've", "youre": "You're",
+    "hed": "He'd", "hell": "He'll", "shed": "She'd", "shell": "She'll",
+    "thats": "That's", "whats": "What's", "whos": "Who's", "hows": "How's",
+    "heres": "Here's", "theres": "There's", "lets": "Let's",
+}
+
+
+def _capitalize_proper_nouns(text: str) -> str:
+    """Capitalize known proper nouns and fixed-form abbreviations.
+
+    Uses a curated dictionary of unambiguous proper nouns (countries, cities,
+    months, days, etc.) and fixed-form corrections (ok→OK, im→I'm, etc.).
+    Common nouns like 'city', 'river', 'language' are left lowercase.
+    """
+    if not text:
+        return text
+
+    words = text.split()
+    result: List[str] = []
+
+    for word in words:
+        # Strip punctuation for lookup
+        clean = re.sub(r'^[^a-zA-Z]*|[^a-zA-Z]*$', '', word)
+        lower = clean.lower()
+
+        if lower in _ALWAYS_CAPS:
+            word = word.replace(clean, _ALWAYS_CAPS[lower])
+        elif lower in _PROPER_NOUNS and lower == clean:
+            word = word.replace(clean, clean[0].upper() + clean[1:].lower())
+
+        result.append(word)
+
+    return ' '.join(result)
+
+
 def _extract_keywords(text: str) -> Set[str]:
     """Extract content words (nouns, verbs, adjectives) for topic comparison.
 
@@ -915,9 +1028,13 @@ def process_srt_entries(
 
     # Capitalization (both modes — sentence-level takes priority)
     if mode == "en_only":
-        # Always capitalize standalone 'i' → 'I' in English mode
+        # 1. Fix proper nouns and fixed forms (OK, I'm, Don't, Beijing, Monday…)
+        for e in result:
+            e.text = _capitalize_proper_nouns(e.text)
+        # 2. Capitalize standalone 'i' → 'I'
         for e in result:
             e.text = _capitalize_pronoun_i(e.text)
+        # 3. Sentence-level or per-line capitalization
         if capitalize_sentence:
             for i, e in enumerate(result):
                 is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
@@ -1037,6 +1154,8 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
 
     # Capitalization
     if mode == "en_only":
+        for e in result:
+            e.text = _capitalize_proper_nouns(e.text)
         for e in result:
             e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:

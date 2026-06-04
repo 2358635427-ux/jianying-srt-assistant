@@ -47,6 +47,7 @@ from srt_processor import (
     _capitalize_entry_sentences,
     _capitalize_sentence,
     _capitalize_pronoun_i,
+    _capitalize_proper_nouns,
     _is_sentence_boundary,
     _normalize_subtitle_text,
     SubtitleEntry,
@@ -1251,8 +1252,10 @@ class MainWindow(QMainWindow):
                 e.text = _normalize_subtitle_text(e.text)
 
         # Capitalization: sentence-level takes priority over per-line
-        # Always capitalize standalone 'i' → 'I' when any capitalization is on
+        # Proper nouns + I → I + sentence / per-line
         if capitalize_sentence or capitalize_line:
+            for e in result:
+                e.text = _capitalize_proper_nouns(e.text)
             for e in result:
                 e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
