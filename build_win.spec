@@ -12,8 +12,13 @@ The output will be in  dist/剪映字幕助手/
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 _project_dir = Path(SPECPATH).resolve()
 sys.path.insert(0, str(_project_dir))
+
+# --- collect jieba data files (dict.txt, posseg models, etc.) ---------------
+_jieba_datas = collect_data_files("jieba")
 
 # --- collect hidden imports -----------------------------------------------
 _pyqt6_hidden = [
@@ -35,7 +40,7 @@ a = Analysis(
     ["main.py"],
     pathex=[str(_project_dir)],
     binaries=[],
-    datas=[],
+    datas=_jieba_datas,
     hiddenimports=_pyqt6_hidden,
     hookspath=[],
     hooksconfig={},
