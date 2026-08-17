@@ -28,6 +28,7 @@ class SubtitleEntry:
     start_ms: int
     end_ms: int
     text: str
+    starts_new_sentence: bool = True
 
     @property
     def start_str(self) -> str:
@@ -128,7 +129,25 @@ def parse_srt(text: str) -> List[SubtitleEntry]:
     for i, e in enumerate(entries, 1):
         e.index = i
 
+    _mark_sentence_starts(entries)
+
     return entries
+
+
+def _mark_sentence_starts(entries: List[SubtitleEntry]) -> None:
+    """基于原始文本的句末标点，标记每条字幕是否为新句子开头。
+
+    必须在删除标点（_normalize_subtitle_text）之前调用，此时 entry.text
+    仍保留原始句末标点。第一段恒为句首；其余段仅当前一段以句末标点结尾时
+    才视为新句（用于后续「句首大写」判定）。
+    """
+    for i, e in enumerate(entries):
+        if i == 0:
+            e.starts_new_sentence = True
+        else:
+            e.starts_new_sentence = entries[i - 1].text.rstrip().endswith(
+                (".", "!", "?", "。", "！", "？")
+            )
 
 
 def entries_to_srt(entries: List[SubtitleEntry]) -> str:
@@ -331,6 +350,7 @@ def redistribute_timestamps(
                 start_ms=piece_start,
                 end_ms=piece_end,
                 text=piece,
+                starts_new_sentence=original.starts_new_sentence if i == 0 else False,
             )
         )
         start = piece_end + min_gap_ms
@@ -919,7 +939,7 @@ def _split_at_dialogue_boundaries(
             continue
 
         start_ms = entry.start_ms
-        for part in parts:
+        for j, part in enumerate(parts):
             part_duration = int(duration * len(part) / total_chars)
             end_ms = min(start_ms + part_duration, entry.end_ms)
             result.append(SubtitleEntry(
@@ -927,6 +947,8 @@ def _split_at_dialogue_boundaries(
                 start_ms=start_ms,
                 end_ms=end_ms,
                 text=part,
+                # 首段继承原句首标志；其后各段都在句末标点之后拆出，属新句
+                starts_new_sentence=entry.starts_new_sentence if j == 0 else True,
             ))
             start_ms = end_ms + 30
 
@@ -963,6 +985,7 @@ def merge_short_entries(
                 start_ms=prev.start_ms,
                 end_ms=curr.end_ms,
                 text=combined,
+                starts_new_sentence=prev.starts_new_sentence,
             )
         else:
             merged.append(curr)
@@ -1036,9 +1059,8 @@ def process_srt_entries(
             e.text = _capitalize_pronoun_i(e.text)
         # 3. Sentence-level or per-line capitalization
         if capitalize_sentence:
-            for i, e in enumerate(result):
-                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
-                e.text = _capitalize_entry_sentences(e.text, is_start)
+            for e in result:
+                e.text = _capitalize_entry_sentences(e.text, e.starts_new_sentence)
         elif capitalize_line:
             for e in result:
                 e.text = _capitalize_sentence(e.text)
@@ -1159,9 +1181,8 @@ def process_srt_content(srt_text: str, chinese_limit: int, english_limit: int | 
         for e in result:
             e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
-            for i, e in enumerate(result):
-                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
-                e.text = _capitalize_entry_sentences(e.text, is_start)
+            for e in result:
+                e.text = _capitalize_entry_sentences(e.text, e.starts_new_sentence)
         elif capitalize_line:
             for e in result:
                 e.text = _capitalize_sentence(e.text)

@@ -48,7 +48,6 @@ from srt_processor import (
     _capitalize_sentence,
     _capitalize_pronoun_i,
     _capitalize_proper_nouns,
-    _is_sentence_boundary,
     _normalize_subtitle_text,
     SubtitleEntry,
 )
@@ -715,7 +714,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._wp_clear_btn)
 
         # --- Version badge ---
-        badge = QLabel("v1.6")
+        badge = QLabel("v1.7")
         badge.setStyleSheet(
             "font-size: 10px; color: #6a6470; background: rgba(30, 30, 40, 0.90); "
             "border: 1px solid #2e2e3a; border-radius: 9px; padding: 1px 9px;"
@@ -1259,9 +1258,8 @@ class MainWindow(QMainWindow):
             for e in result:
                 e.text = _capitalize_pronoun_i(e.text)
         if capitalize_sentence:
-            for i, e in enumerate(result):
-                is_start = (i == 0) or _is_sentence_boundary(result[i - 1].text, e.text)
-                e.text = _capitalize_entry_sentences(e.text, is_start)
+            for e in result:
+                e.text = _capitalize_entry_sentences(e.text, e.starts_new_sentence)
         elif capitalize_line:
             for e in result:
                 e.text = _capitalize_sentence(e.text)
@@ -1338,7 +1336,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "关于 剪映字幕助手",
             "<h3 style='color:#d4a040'>剪映字幕助手</h3>"
-            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.6</p>"
+            "<p style='color:#c8c0b0'>Draft SRT Assistant v1.7</p>"
             "<p style='color:#8a8070'>"
             "专门针对剪映的字幕后处理工具。<br>"
             "支持单行字幕字数限制（中/英文可配置），<br>"
